@@ -66,6 +66,24 @@ function hasUsefulJsonPayload(payload: unknown): boolean {
   return hasUsefulValue(payload);
 }
 
+function hasOpenAiAssistantRoleStart(payload: Record<string, unknown>): boolean {
+  // OpenAI-format start chunk: {choices:[{delta:{role:"assistant"}}]}.
+  // Providers (e.g. Kiro/AWS CodeWhisperer wrapped via our transformer) may
+  // legitimately emit a role-only chunk before producing the first content or
+  // tool_call delta — especially when the upstream model is in a long thinking
+  // phase. Treating it as a readiness signal prevents false 504s while
+  // ping-only zombie streams (which never emit a chunk at all) still fail.
+  const choices = payload.choices;
+  if (!Array.isArray(choices) || choices.length === 0) return false;
+  for (const choice of choices) {
+    if (!isRecord(choice)) continue;
+    const delta = choice.delta;
+    if (!isRecord(delta)) continue;
+    if (typeof delta.role === "string" && delta.role.length > 0) return true;
+  }
+  return false;
+}
+
 function hasAcceptedStreamStartPayload(payload: unknown, eventType = ""): boolean {
   if (!isRecord(payload)) return false;
 
@@ -76,6 +94,9 @@ function hasAcceptedStreamStartPayload(payload: unknown, eventType = ""): boolea
   const type = typeof payload.type === "string" ? payload.type : eventType;
   if (type === "message_start" && isRecord(payload.message)) return true;
   if (type === "content_block_start" && isRecord(payload.content_block)) return true;
+
+  // OpenAI-style role-only start chunk (Kiro/CodeWhisperer transformer, GLM, etc).
+  if (hasOpenAiAssistantRoleStart(payload)) return true;
 
   return false;
 }

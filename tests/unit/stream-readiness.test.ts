@@ -68,6 +68,9 @@ test("hasUsefulStreamContent ignores keepalives and lifecycle-only chunks", () =
     hasUsefulStreamContent(`data: ${JSON.stringify({ type: "response.created" })}\n\n`),
     false
   );
+  // hasUsefulStreamContent stays strict: a role-only OpenAI start chunk is not
+  // "useful content", it is only a readiness signal (covered by
+  // hasStreamReadinessSignal below).
   assert.equal(
     hasUsefulStreamContent(
       `data: ${JSON.stringify({ choices: [{ delta: { role: "assistant" }, index: 0 }] })}\n\n`
@@ -163,6 +166,35 @@ test("hasStreamReadinessSignal accepts Claude stream start events", () => {
       })}\n\n`
     ),
     true
+  );
+});
+
+test("hasStreamReadinessSignal accepts OpenAI-style role-only start chunk", () => {
+  // Kiro/CodeWhisperer transformer (and other OpenAI-shaped providers) may
+  // emit a role-only chunk before the first content/tool delta when the
+  // upstream model is in a long thinking phase. This must be accepted as a
+  // readiness signal so we don't 504 on slow-but-healthy streams.
+  assert.equal(
+    hasStreamReadinessSignal(
+      `data: ${JSON.stringify({
+        id: "chatcmpl-1",
+        object: "chat.completion.chunk",
+        choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
+      })}\n\n`
+    ),
+    true
+  );
+  // An empty choices array must NOT count as readiness.
+  assert.equal(
+    hasStreamReadinessSignal(`data: ${JSON.stringify({ choices: [] })}\n\n`),
+    false
+  );
+  // A choices entry without a delta.role must NOT count as readiness.
+  assert.equal(
+    hasStreamReadinessSignal(
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: {} }] })}\n\n`
+    ),
+    false
   );
 });
 
